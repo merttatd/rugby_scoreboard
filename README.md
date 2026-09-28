@@ -1,4 +1,4 @@
-# Rugby Scoreboard — Yerel EXE
+# Rugby Scoreboard
 
 RugbyScoreboard.exe dosyasına çift tıklayın. Baslat.cmd de aynı uygulamayı başlatır.
 
