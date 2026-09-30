@@ -3,7 +3,26 @@ const KEY='touchline-rugby-v1', view=new URLSearchParams(location.search).has('d
 const $=id=>document.getElementById(id), names={try:'Try',conversion:'Conversion',penalty:'Penaltı golü',drop:'Drop goal',penaltyTry:'Penalty try'}, points={try:5,conversion:2,penalty:3,drop:3,penaltyTry:7};
 const fresh=()=>({version:1,home:'EV SAHİBİ',away:'DEPLASMAN',title:'HAZIRLIK MAÇI',venue:'RUGBY SAHASI',elapsed:0,anchor:null,phase:'first',events:[],cards:[],pending:null});
 let state=fresh(), undoStack=[], channel, toastTimer;
-try{const saved=JSON.parse(localStorage.getItem(KEY));if(saved?.version===1&&Array.isArray(saved.events)&&Array.isArray(saved.cards))state=saved;}catch{}
+// Only spectator windows restore the current match. Opening the control panel starts fresh.
+if(view){try{const saved=JSON.parse(localStorage.getItem(KEY));if(saved?.version===1&&Array.isArray(saved.events)&&Array.isArray(saved.cards))state=saved;}catch{}}
+let seenScoreEvents=null;
+const effectTimers={};
+function updateScoreEffects(){
+    const scored=state.events.filter(e=>e.points>0);
+    if(seenScoreEvents===null){seenScoreEvents=new Set(scored.map(e=>e.id));return;}
+    const added={home:0,away:0};
+    for(const event of scored){if(!seenScoreEvents.has(event.id)&&event.team in added)added[event.team]+=event.points;seenScoreEvents.add(event.id);}
+    for(const team of ['home','away']){
+        const panel=$(`${team}Score`).parentElement;
+        if(!state.events.length){clearTimeout(effectTimers[team]);panel.classList.remove('scored');}
+        if(!added[team])continue;
+        let badge=$(`${team}Effect`);
+        if(!badge){badge=document.createElement('div');badge.id=`${team}Effect`;badge.className='score-effect';badge.setAttribute('aria-hidden','true');panel.appendChild(badge);}
+        badge.textContent=`+${added[team]}`;
+        clearTimeout(effectTimers[team]);panel.classList.remove('scored');void panel.offsetWidth;panel.classList.add('scored');
+        effectTimers[team]=setTimeout(()=>panel.classList.remove('scored'),1400);
+    }
+}
 const elapsed=()=>state.elapsed+(state.anchor===null?0:Math.max(0,Date.now()-state.anchor));
 const format=ms=>{const s=Math.floor(Math.max(0,ms)/1000);return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;};
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -15,12 +34,26 @@ function log(text,team=null,type=null){state.events.push({id:Date.now()+Math.ran
 function pause(){state.elapsed=elapsed();state.anchor=null;}
 function toggle(){if(['break','finished'].includes(state.phase))return notify('Önce oynanacak devreyi seçin.');act(()=>{if(state.anchor===null){state.anchor=Date.now();}else pause();});}
 function score(team,type){act(()=>{log(names[type],team,type);state.pending=null;});}
-for(const team of ['home','away']){$('scoringPanels').insertAdjacentHTML('beforeend',`<section class="panel scoring-panel ${team==='away'?'away-panel':''}"><div class="section-title"><h3 id="${team}PanelTitle"></h3><span>${team==='home'?'02 / EV SAHİBİ':'03 / DEPLASMAN'}</span></div><div class="score-buttons">${Object.keys(points).map(type=>`<button data-team="${team}" data-score="${type}" class="${type}" id="${team}-${type}">${names[type]} <strong>+${points[type]}</strong></button>`).join('')}<button id="${team}-miss">Conversion kaçtı / vazgeç</button></div><div class="conversion-info" id="${team}Pending"></div><div class="card-controls"><input type="number" id="${team}Player" min="1" max="99" placeholder="No." aria-label="${team==='home'?'Ev sahibi':'Deplasman'} oyuncu numarası"><button class="yellow" data-card="yellow" data-team="${team}">▮ Sarı</button><button class="red" data-card="red" data-team="${team}">▮ Kırmızı</button></div><div id="${team}Cards" class="cards-list"></div></section>`);
-$(`${team}-miss`).onclick=()=>{act(()=>{log('Conversion kaçtı / vazgeçildi',team);state.pending=null;});};}
+function lastScore(){return [...state.events].reverse().find(event=>event.points>0);}
+function cancelLastScore(){
+    if(view)return;
+    const event=lastScore();
+    if(!event)return;
+    act(()=>{
+        state.events=state.events.filter(item=>item.id!==event.id);
+        log(`${event.text} iptal edildi (−${event.points} puan, ${event.time})`,event.team);
+        clearTimeout(effectTimers[event.team]);
+        $(`${event.team}Score`).parentElement.classList.remove('scored');
+    });
+    notify(`${state[event.team]}: ${event.text} iptal edildi (−${event.points}).`);
+}
+$('cancelScore').onclick=cancelLastScore;
+for(const team of ['home','away']){$('scoringPanels').insertAdjacentHTML('beforeend',`<section class="panel scoring-panel ${team==='away'?'away-panel':''}"><div class="section-title"><h3 id="${team}PanelTitle"></h3><span>${team==='home'?'02 / EV SAHİBİ':'03 / DEPLASMAN'}</span></div><div class="score-buttons">${Object.keys(points).map(type=>`<button data-team="${team}" data-score="${type}" class="${type}" id="${team}-${type}">${names[type]} <strong>+${points[type]}</strong></button>`).join('')}</div><div class="conversion-info" id="${team}Pending"></div><div class="card-controls"><input type="number" id="${team}Player" min="1" max="99" placeholder="No." aria-label="${team==='home'?'Ev sahibi':'Deplasman'} oyuncu numarası"><button class="yellow" data-card="yellow" data-team="${team}">▮ Sarı</button><button class="red" data-card="red" data-team="${team}">▮ Kırmızı</button></div><div id="${team}Cards" class="cards-list"></div></section>`);
+}
 document.querySelectorAll('[data-score]').forEach(b=>b.onclick=()=>score(b.dataset.team,b.dataset.score));
 document.querySelectorAll('[data-card]').forEach(b=>b.onclick=()=>{const team=b.dataset.team,player=Number($(`${team}Player`).value);if(!Number.isInteger(player)||player<1||player>99)return notify('1–99 arasında oyuncu numarası girin.');if(state.cards.some(c=>c.team===team&&c.player===player))return notify('Bu oyuncunun kart kaydı zaten aktif.');act(()=>{state.cards.push({id:Date.now(),team,player,type:b.dataset.card});log(`${player} numara · ${b.dataset.card==='yellow'?'Sarı kart':'Kırmızı kart'}`,team);});});
-function render(){for(const team of ['home','away']){const events=state.events.filter(e=>e.team===team);$(`${team}Name`).textContent=state[team];$(`${team}PanelTitle`).textContent=state[team];$(`${team}Score`).textContent=events.reduce((s,e)=>s+e.points,0);$(`${team}Stats`).textContent=`${events.filter(e=>e.type==='try'||e.type==='penaltyTry').length} TRY  ·  ${events.filter(e=>e.type==='conversion').length} CONV`;$(`${team}Pending`).textContent='Skor girişleri her zaman açık. Puanları manuel yönetin.';for(const type of [...Object.keys(points),'miss'])$(`${team}-${type}`).disabled=false;}
-for(const key of ['home','away','title','venue'])if(document.activeElement!==$(key+'Input'))$(key+'Input').value=state[key];$('boardTitle').textContent=state.title;$('venueLabel').textContent=state.venue;$('periodLabel').textContent={first:'1. DEVRE',break:'DEVRE ARASI',second:'2. DEVRE',extra:'UZATMA',finished:'MAÇ SONU'}[state.phase];$('toggleClock').textContent=state.anchor===null?'▶ Saati başlat':'Ⅱ Saati durdur';$('toggleClock').disabled=['break','finished'].includes(state.phase);$('nextPeriod').textContent={first:'Devre arası',break:'2. devreye geç',second:'Uzatmaya geç',extra:'Uzatma devam ediyor',finished:'Maç tamamlandı'}[state.phase];$('nextPeriod').disabled=['extra','finished'].includes(state.phase);$('finish').disabled=state.phase==='finished';$('undo').disabled=!undoStack.length;$('liveStatus').textContent=state.phase==='finished'?'● MAÇ SONU':state.anchor!==null?'● CANLI':state.phase==='break'?'● DEVRE ARASI':'● SAAT DURDU';$('history').innerHTML=state.events.length?[...state.events].reverse().map(e=>`<div class="history-item"><time>${esc(e.time)}</time><div>${esc(e.text)}${e.points?` <b>+${e.points}</b>`:''}<br><small>${e.team?esc(state[e.team]):'Maç yönetimi'}</small></div></div>`).join(''):'<div class="empty">Henüz maç olayı kaydedilmedi.</div>';tick();}
+function render(){const latest=lastScore();$('cancelScore').disabled=!latest;$('cancelScoreHint').textContent=latest?state[latest.team]+' · '+latest.text+' · '+latest.points+' puan':'İptal edilecek sayı yok.';for(const team of ['home','away']){const events=state.events.filter(e=>e.team===team);$(`${team}Name`).textContent=state[team];$(`${team}PanelTitle`).textContent=state[team];$(`${team}Score`).textContent=events.reduce((s,e)=>s+e.points,0);$(`${team}Stats`).textContent=`${events.filter(e=>e.type==='try'||e.type==='penaltyTry').length} TRY  ·  ${events.filter(e=>e.type==='conversion').length} CONV`;$(`${team}Pending`).textContent='Skor girişleri her zaman açık. Puanları manuel yönetin.';for(const type of Object.keys(points))$(`${team}-${type}`).disabled=false;}
+for(const key of ['home','away','title','venue'])if(document.activeElement!==$(key+'Input'))$(key+'Input').value=state[key];$('boardTitle').textContent=state.title;$('venueLabel').textContent=state.venue;$('periodLabel').textContent={first:'1. DEVRE',break:'DEVRE ARASI',second:'2. DEVRE',extra:'UZATMA',finished:'MAÇ SONU'}[state.phase];$('toggleClock').textContent=state.anchor===null?'▶ Saati başlat':'Ⅱ Saati durdur';$('toggleClock').disabled=['break','finished'].includes(state.phase);$('nextPeriod').textContent={first:'Devre arası',break:'2. devreye geç',second:'Uzatmaya geç',extra:'Uzatma devam ediyor',finished:'Maç tamamlandı'}[state.phase];$('nextPeriod').disabled=['extra','finished'].includes(state.phase);$('finish').disabled=state.phase==='finished';$('undo').disabled=!undoStack.length;$('liveStatus').textContent=state.phase==='finished'?'● MAÇ SONU':state.anchor!==null?'● CANLI':state.phase==='break'?'● DEVRE ARASI':'● SAAT DURDU';$('history').innerHTML=state.events.length?[...state.events].reverse().map(e=>`<div class="history-item"><time>${esc(e.time)}</time><div>${esc(e.text)}${e.points?` <b>+${e.points}</b>`:''}<br><small>${e.team?esc(state[e.team]):'Maç yönetimi'}</small></div></div>`).join(''):'<div class="empty">Henüz maç olayı kaydedilmedi.</div>';updateScoreEffects();tick();}
 function tick(){const now=elapsed();$('clock').textContent=format(now);const limit=state.phase==='first'?2400000:4800000;$('clockHint').textContent=state.phase==='finished'?'Maç tamamlandı':state.phase==='break'?'İkinci devre bekleniyor':state.phase==='extra'?'Hakem kontrollü uzatma':now>=limit?'Süre doldu · hakem kararı bekleniyor':'40 dakikalık devre';let tags=[];for(const team of ['home','away']){const cardHtml=state.cards.filter(c=>c.team===team).map(c=>{const label=c.type==='yellow'?'SARI KART':'İHRAÇ';tags.push(`<span class="card-tag">${c.type==='yellow'?'🟨':'🟥'} ${esc(state[team])} · #${c.player} · ${label}</span>`);return `<div class="card-row"><span>${c.type==='yellow'?'🟨':'🟥'} #${c.player} · ${label}</span><button data-remove="${c.id}">Kartı kaldır</button></div>`;}).join('');if($(`${team}Cards`).innerHTML!==cardHtml)$(`${team}Cards`).innerHTML=cardHtml;}$('boardCards').innerHTML=tags.join('');}
 document.addEventListener('click',e=>{const b=e.target.closest('[data-remove]');if(!b||view)return;const card=state.cards.find(c=>c.id===Number(b.dataset.remove));if(!card)return;act(()=>{state.cards=state.cards.filter(c=>c.id!==card.id);log(`#${card.player} kart kaydı kapatıldı`,card.team);});});
 $('toggleClock').onclick=toggle;$('nextPeriod').onclick=()=>{if(!confirm('Bir sonraki maç aşamasına geçilsin mi?'))return;act(()=>{pause();if(state.phase==='first'){state.phase='break';log('Devre arası');}else if(state.phase==='break'){state.phase='second';log('İkinci devre');}else if(state.phase==='second'){state.phase='extra';log('Uzatma');}});};
@@ -37,4 +70,4 @@ $('spectator').onclick=()=>{const url=new URL(location.href);url.hash='';url.sea
 document.addEventListener('keydown',e=>{if(view||['INPUT','TEXTAREA','BUTTON','SELECT'].includes(document.activeElement.tagName)||e.ctrlKey||e.altKey||e.metaKey)return;if(e.code==='Space'){e.preventDefault();toggle();}});
 try{channel=new BroadcastChannel(KEY);channel.onmessage=e=>{if(view){state=e.data;render();}};}catch{}
 window.addEventListener('storage',e=>{if(e.key===KEY&&e.newValue){try{state=JSON.parse(e.newValue);undoStack=[];render();}catch{}}});
-if(view)document.body.classList.add('spectator');render();setInterval(tick,200);
+if(view)document.body.classList.add('spectator');render();if(!view)save();setInterval(tick,200);

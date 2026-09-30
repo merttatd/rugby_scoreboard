@@ -12,7 +12,7 @@ using System.Windows.Forms;
 
 public static class Launcher
 {
-    // Stable directory keeps browser-local match storage across launches.
+    // Stable directory allows the control and spectator windows to share state.
     public static string ExtractAssets(string directory)
     {
         Directory.CreateDirectory(directory);
@@ -57,7 +57,8 @@ public static class Launcher
         {
             string directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RugbyScoreboard", "LocalApp");
             string page = ExtractAssets(directory);
-            Process.Start(new ProcessStartInfo(page) { UseShellExecute = true });
+            string launchUrl = new Uri(page).AbsoluteUri + "?launch=" + Guid.NewGuid().ToString("N");
+            Process.Start(new ProcessStartInfo(launchUrl) { UseShellExecute = true });
         }
         catch (Exception error)
         {
